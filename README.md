@@ -121,3 +121,17 @@ python main.py
 ```
 
 The pipeline loads all dimensions then runs quality checks. Previous unresolved issues are automatically re-checked and marked `Solved = 1` with a resolution date when the OLTP data has been corrected.
+
+## Automation (Windows Task Scheduler)
+
+Schedule the ETL to run every 15 minutes:
+
+```powershell
+# Default: runs every 15 minutes
+powershell -ExecutionPolicy Bypass -File scripts\schedule_etl.ps1
+
+# Custom interval and path
+powershell -ExecutionPolicy Bypass -File scripts\schedule_etl.ps1 -ProjectPath "C:\Your\Path" -IntervalMinutes 30
+```
+
+This creates a Windows scheduled task named `DataGov_DQ_ETL` that executes `main.py` at the specified interval. Logs are written to `logs\etl_YYYYMMDD.log`.
