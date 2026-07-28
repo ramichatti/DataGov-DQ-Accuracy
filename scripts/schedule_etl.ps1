@@ -27,7 +27,8 @@ if (-not (Test-Path "$ProjectPath\logs")) {
 $Action = New-ScheduledTaskAction -Execute $ScriptPath
 $StartTime = (Get-Date).AddMinutes(1).ToString("HH:mm")
 $Trigger = New-ScheduledTaskTrigger -Once -At $StartTime -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) -RepetitionDuration ([TimeSpan]::FromDays(365))
-$Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+$CurrentUser = "$env:USERDOMAIN\$env:USERNAME"
+$Principal = New-ScheduledTaskPrincipal -UserId $CurrentUser -LogonType Interactive -RunLevel Highest
 $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
 
 try {
