@@ -93,35 +93,32 @@ class CompteQualityEngine(BaseQualityEngine):
             try:
                 # Get compte info from OLTP to find dimension keys
                 query = f"""
-                SELECT Numero_Compte, Client_ID 
+                SELECT Compte_ID, Client_ID 
                 FROM CoreBanking_OLTP.dbo.Compte 
                 WHERE Compte_ID = {issue.ligne_id}
                 """
                 results = self.oltp_conn.execute_query(query)
                 
                 if results:
-                    numero_compte = results[0][0]
+                    compte_id = results[0][0]
                     client_id = results[0][1]
                     
-                    # Get Compte_Key from DW
-                    compte_key = self.get_compte_key_by_numero(numero_compte)
-                    issue.compte_key = compte_key
+                    # Get Compte_Key from DW using Compte_ID_Source
+                    issue.compte_key = self.get_compte_key_by_id(compte_id)
                     
-                    # Get Client_Key and Agence_Key from DW via Client
+                    # Get Client_Key from DW using Client_ID_Source
                     if client_id:
-                        client_query = f"SELECT CIN, Agence_ID FROM CoreBanking_OLTP.dbo.Client WHERE Client_ID = {client_id}"
+                        issue.client_key = self.get_client_key_by_id(client_id)
+                        
+                        # Get Agence_Key from DW via Client
+                        client_query = f"SELECT Agence_ID FROM CoreBanking_OLTP.dbo.Client WHERE Client_ID = {client_id}"
                         client_results = self.oltp_conn.execute_query(client_query)
-                        if client_results:
-                            cin = client_results[0][0]
-                            agence_id = client_results[0][1]
-                            
-                            issue.client_key = self.get_client_key_by_cin(cin)
-                            
-                            if agence_id:
-                                agence_query = f"SELECT Code_Agence FROM CoreBanking_OLTP.dbo.Agence WHERE Agence_ID = {agence_id}"
-                                agence_results = self.oltp_conn.execute_query(agence_query)
-                                if agence_results:
-                                    issue.agence_key = self.get_agence_key_by_code(agence_results[0][0])
+                        if client_results and client_results[0][0]:
+                            agence_id = client_results[0][0]
+                            agence_query = f"SELECT Code_Agence FROM CoreBanking_OLTP.dbo.Agence WHERE Agence_ID = {agence_id}"
+                            agence_results = self.oltp_conn.execute_query(agence_query)
+                            if agence_results:
+                                issue.agence_key = self.get_agence_key_by_code(agence_results[0][0])
                 
             except Exception as e:
                 logger.warning(f"Could not enrich issue {issue.ligne_id}: {e}")

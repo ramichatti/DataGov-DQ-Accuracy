@@ -32,6 +32,8 @@ CREATE TABLE Dim_Client
 (
     Client_Key       INT IDENTITY(1,1) PRIMARY KEY,
 
+    Client_ID_Source INT,
+
     CIN              VARCHAR(8),
     Nom              VARCHAR(50),
     Prenom           VARCHAR(50),
@@ -60,6 +62,8 @@ CREATE TABLE Dim_Compte
 (
     Compte_Key       INT IDENTITY(1,1) PRIMARY KEY,
 
+    Compte_ID_Source INT,
+
     Numero_Compte    VARCHAR(30),
     Type_Compte      VARCHAR(50),
 
@@ -84,6 +88,8 @@ CREATE TABLE Dim_Transaction
 (
     Transaction_Key  BIGINT IDENTITY(1,1) PRIMARY KEY,
 
+    Transaction_ID_Source BIGINT,
+
     Canal            VARCHAR(50),
 
     Type_Transaction VARCHAR(50),
@@ -105,6 +111,8 @@ GO
 CREATE TABLE Dim_Credit
 (
     Credit_Key       INT IDENTITY(1,1) PRIMARY KEY,
+
+    Credit_ID_Source INT,
 
     Type_Credit      VARCHAR(50),
 
@@ -261,4 +269,25 @@ CREATE TABLE Fact_Accuracy
         FOREIGN KEY (Credit_Key)
         REFERENCES Dim_Credit(Credit_Key)
 );
+GO
+
+
+/* =====================================================
+   ALTER TABLE FACT_ACCURACY
+   Remove Issue_Category and Business_Impact columns
+   Add Solved and date_de_resolution columns
+===================================================== */
+
+ALTER TABLE Fact_Accuracy
+DROP COLUMN Issue_Category,
+DROP COLUMN Business_Impact;
+GO
+
+ALTER TABLE Fact_Accuracy
+ADD Solved BIT DEFAULT 0,
+ADD date_de_resolution DATETIME NULL;
+GO
+
+ALTER TABLE CoreBanking_DW.dbo.Dim_Client
+ADD Client_ID_Source INT;
 GO

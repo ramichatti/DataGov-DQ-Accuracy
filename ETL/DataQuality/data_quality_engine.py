@@ -26,15 +26,15 @@ class QualityIssue:
     valeur_erreur: str
     valeur_attendue: str
     error_message: str
-    issue_category: str
     severity: str
-    business_impact: str
     date_key: int
     client_key: int
     agence_key: int
     compte_key: int = None
     transaction_key: int = None
     credit_key: int = None
+    solved: bool = False
+    date_de_resolution = None
 
 
 class BaseQualityEngine:
@@ -69,6 +69,17 @@ class BaseQualityEngine:
                 return 20200101
         return 20200101
     
+    def get_client_key_by_id(self, client_id: int) -> int:
+        """Get Client_Key from DW by Client_ID_Source"""
+        try:
+            query = f"SELECT Client_Key FROM CoreBanking_DW.dbo.Dim_Client WHERE Client_ID_Source = {client_id}"
+            results = self.dwh_conn.execute_query(query)
+            if results:
+                return results[0][0]
+        except Exception as e:
+            logger.warning(f"Could not find client key for ID {client_id}: {e}")
+        return 1  # Default/unknown client
+
     def get_client_key_by_cin(self, cin: str) -> int:
         """Get Client_Key from DW by CIN"""
         try:
@@ -91,6 +102,17 @@ class BaseQualityEngine:
             logger.warning(f"Could not find agence key for code {code_agence}: {e}")
         return 1  # Default/unknown agence
     
+    def get_compte_key_by_id(self, compte_id: int) -> int:
+        """Get Compte_Key from DW by Compte_ID_Source"""
+        try:
+            query = f"SELECT Compte_Key FROM CoreBanking_DW.dbo.Dim_Compte WHERE Compte_ID_Source = {compte_id}"
+            results = self.dwh_conn.execute_query(query)
+            if results:
+                return results[0][0]
+        except Exception as e:
+            logger.warning(f"Could not find compte key for ID {compte_id}: {e}")
+        return None
+
     def get_compte_key_by_numero(self, numero_compte: str) -> int:
         """Get Compte_Key from DW by Numero_Compte"""
         try:
@@ -101,6 +123,30 @@ class BaseQualityEngine:
         except Exception as e:
             logger.warning(f"Could not find compte key for numero {numero_compte}: {e}")
         return None
+    
+    def get_transaction_key_by_id(self, transaction_id: int) -> int:
+        """Get Transaction_Key from DW Dim_Transaction by Transaction_ID_Source"""
+        try:
+            query = f"SELECT Transaction_Key FROM CoreBanking_DW.dbo.Dim_Transaction WHERE Transaction_ID_Source = {transaction_id}"
+            results = self.dwh_conn.execute_query(query)
+            if results:
+                return results[0][0]
+            return None
+        except Exception as e:
+            logger.warning(f"Could not get Transaction_Key for ID {transaction_id}: {e}")
+            return None
+    
+    def get_credit_key_by_id(self, credit_id: int) -> int:
+        """Get Credit_Key from DW Dim_Credit by Credit_ID_Source"""
+        try:
+            query = f"SELECT Credit_Key FROM CoreBanking_DW.dbo.Dim_Credit WHERE Credit_ID_Source = {credit_id}"
+            results = self.dwh_conn.execute_query(query)
+            if results:
+                return results[0][0]
+            return None
+        except Exception as e:
+            logger.warning(f"Could not get Credit_Key for ID {credit_id}: {e}")
+            return None
     
     def add_issue(self, issue: QualityIssue):
         """Add a quality issue to the list"""
@@ -133,9 +179,7 @@ class BaseQualityEngine:
                     valeur_erreur=valeur_erreur,
                     valeur_attendue=valeur_attendue,
                     error_message=f"NULL value found in {column_name}",
-                    issue_category="Completeness",
                     severity=severity,
-                    business_impact="Missing critical data may impact business operations",
                     date_key=self.get_date_key(None),
                     client_key=1,
                     agence_key=1
@@ -172,9 +216,7 @@ class BaseQualityEngine:
                     valeur_erreur=valeur_erreur,
                     valeur_attendue=valeur_attendue,
                     error_message=f"Invalid format in {column_name}",
-                    issue_category="Validity",
                     severity=severity,
-                    business_impact="Invalid format may cause processing errors",
                     date_key=self.get_date_key(None),
                     client_key=1,
                     agence_key=1
@@ -211,9 +253,7 @@ class BaseQualityEngine:
                     valeur_erreur=valeur_erreur,
                     valeur_attendue=valeur_attendue,
                     error_message=f"Value out of range in {column_name}",
-                    issue_category="Validity",
                     severity=severity,
-                    business_impact="Out of range values may cause calculation errors",
                     date_key=self.get_date_key(None),
                     client_key=1,
                     agence_key=1
@@ -249,9 +289,7 @@ class BaseQualityEngine:
                     valeur_erreur=valeur_erreur,
                     valeur_attendue=valeur_attendue,
                     error_message=f"Orphaned record in {column_name}",
-                    issue_category="Consistency",
                     severity=severity,
-                    business_impact="Broken relationships may cause data integrity issues",
                     date_key=self.get_date_key(None),
                     client_key=1,
                     agence_key=1
@@ -288,9 +326,7 @@ class BaseQualityEngine:
                     valeur_erreur=valeur_erreur,
                     valeur_attendue=valeur_attendue,
                     error_message=f"Inaccurate value in {column_name}: {description}",
-                    issue_category="Accuracy",
                     severity=severity,
-                    business_impact="Inaccurate data may lead to incorrect business decisions and operational errors",
                     date_key=self.get_date_key(None),
                     client_key=1,
                     agence_key=1

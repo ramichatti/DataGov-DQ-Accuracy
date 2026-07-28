@@ -107,8 +107,8 @@ class ClientQualityEngine(BaseQualityEngine):
                     cin = results[0][0]
                     agence_id = results[0][1]
                     
-                    # Get Client_Key from DW
-                    issue.client_key = self.get_client_key_by_cin(cin)
+                    # Get Client_Key from DW using Client_ID_Source (stable business key)
+                    issue.client_key = self.get_client_key_by_id(issue.ligne_id)
                     
                     # Get Agence_Key from DW (need to get code from OLTP first)
                     if agence_id:

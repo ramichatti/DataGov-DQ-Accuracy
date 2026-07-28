@@ -27,6 +27,7 @@ def extract_transactions(oltp_conn: OLTPConnection) -> list:
     """
     query = """
     SELECT 
+        tb.Transaction_ID,
         ct.Libelle AS Canal,
         tb.Type_Transaction,
         tb.Montant,
@@ -60,11 +61,12 @@ def transform_transactions(raw_data: list) -> list:
     
     for row in raw_data:
         transformed.append({
-            'Canal': row[0] if row[0] else 'Standard',
-            'Type_Transaction': row[1] if row[1] else 'Standard',
-            'Montant': row[2] if row[2] is not None else 0.00,
-            'Date_Transaction': row[3],
-            'Reference': row[4] if row[4] else ''
+            'Transaction_ID_Source': row[0],
+            'Canal': row[1] if row[1] else 'Standard',
+            'Type_Transaction': row[2] if row[2] else 'Standard',
+            'Montant': row[3] if row[3] is not None else 0.00,
+            'Date_Transaction': row[4],
+            'Reference': row[5] if row[5] else ''
         })
     
     logger.info(f"Transformed {len(transformed)} transaction records")
@@ -87,10 +89,9 @@ def load_dim_transaction(dwh_conn: DWHConnection, transformed_data: list) -> dic
         logger.warning("No data to load")
         return {'inserted': 0, 'updated': 0}
     
-    # Since Transaction doesn't have a unique business key,
-    # we'll use a composite key for matching: Canal + Type_Transaction + Montant + Date_Transaction + Reference
+    # Get existing transactions from DW using Transaction_ID_Source (stable business key)
     existing_transactions_query = """
-    SELECT Transaction_Key, Canal, Type_Transaction, Montant, Date_Transaction, Reference 
+    SELECT Transaction_Key, Transaction_ID_Source, Canal, Type_Transaction, Montant, Date_Transaction, Reference 
     FROM CoreBanking_DW.dbo.Dim_Transaction
     """
     existing_transactions = {}
@@ -98,20 +99,27 @@ def load_dim_transaction(dwh_conn: DWHConnection, transformed_data: list) -> dic
     try:
         existing_results = dwh_conn.execute_query(existing_transactions_query)
         for row in existing_results:
-            composite_key = f"{row[1]}|{row[2]}|{row[3]}|{row[4]}|{row[5]}"
-            existing_transactions[composite_key] = row[0]
+            if row[1] is not None:
+                existing_transactions[row[1]] = {
+                    'Transaction_Key': row[0],
+                    'Transaction_ID_Source': row[1],
+                    'Canal': row[2],
+                    'Type_Transaction': row[3],
+                    'Montant': row[4],
+                    'Date_Transaction': row[5],
+                    'Reference': row[6]
+                }
         logger.info(f"Found {len(existing_transactions)} existing transactions in DW")
     except Exception as e:
         logger.warning(f"Could not fetch existing transactions: {e}")
     
-    # Separate new and existing transactions
     new_transactions = []
     existing_transactions_data = []
     
     for transaction in transformed_data:
-        composite_key = f"{transaction['Canal']}|{transaction['Type_Transaction']}|{transaction['Montant']}|{transaction['Date_Transaction']}|{transaction['Reference']}"
-        if composite_key in existing_transactions:
-            transaction['Transaction_Key'] = existing_transactions[composite_key]
+        transaction_id = transaction['Transaction_ID_Source']
+        if transaction_id in existing_transactions:
+            transaction['Transaction_Key'] = existing_transactions[transaction_id]['Transaction_Key']
             existing_transactions_data.append(transaction)
         else:
             new_transactions.append(transaction)
@@ -126,12 +134,13 @@ def load_dim_transaction(dwh_conn: DWHConnection, transformed_data: list) -> dic
         if new_transactions:
             insert_query = """
             INSERT INTO CoreBanking_DW.dbo.Dim_Transaction 
-            (Canal, Type_Transaction, Montant, Date_Transaction, Reference)
-            VALUES (?, ?, ?, ?, ?)
+            (Transaction_ID_Source, Canal, Type_Transaction, Montant, Date_Transaction, Reference)
+            VALUES (?, ?, ?, ?, ?, ?)
             """
             
             for transaction in new_transactions:
                 cursor.execute(insert_query, (
+                    transaction['Transaction_ID_Source'],
                     transaction['Canal'],
                     transaction['Type_Transaction'],
                     transaction['Montant'],
@@ -142,23 +151,44 @@ def load_dim_transaction(dwh_conn: DWHConnection, transformed_data: list) -> dic
             
             logger.info(f"Inserted {rows_inserted} new transactions")
         
-        # Update existing transactions
+        # Update existing transactions - only if values have changed
         if existing_transactions_data:
-            update_query = """
-            UPDATE CoreBanking_DW.dbo.Dim_Transaction
-            SET Type_Transaction = ?, Montant = ?, Date_Transaction = ?, Reference = ?
-            WHERE Transaction_Key = ?
-            """
-            
             for transaction in existing_transactions_data:
-                cursor.execute(update_query, (
-                    transaction['Type_Transaction'],
-                    transaction['Montant'],
-                    transaction['Date_Transaction'],
-                    transaction['Reference'],
-                    transaction['Transaction_Key']
-                ))
-                rows_updated += 1
+                existing = existing_transactions[transaction['Transaction_ID_Source']]
+                
+                columns_to_update = []
+                update_values = []
+                
+                if str(transaction['Canal']) != str(existing['Canal']):
+                    columns_to_update.append('Canal = ?')
+                    update_values.append(transaction['Canal'])
+                
+                if str(transaction['Type_Transaction']) != str(existing['Type_Transaction']):
+                    columns_to_update.append('Type_Transaction = ?')
+                    update_values.append(transaction['Type_Transaction'])
+                
+                if str(transaction['Montant']) != str(existing['Montant']):
+                    columns_to_update.append('Montant = ?')
+                    update_values.append(transaction['Montant'])
+                
+                if str(transaction['Date_Transaction']) != str(existing['Date_Transaction']):
+                    columns_to_update.append('Date_Transaction = ?')
+                    update_values.append(transaction['Date_Transaction'])
+                
+                if str(transaction['Reference'] if transaction['Reference'] else '') != str(existing['Reference'] if existing['Reference'] else ''):
+                    columns_to_update.append('Reference = ?')
+                    update_values.append(transaction['Reference'])
+                
+                # Only execute UPDATE if at least one column changed
+                if columns_to_update:
+                    update_query = f"""
+                    UPDATE CoreBanking_DW.dbo.Dim_Transaction
+                    SET {', '.join(columns_to_update)}
+                    WHERE Transaction_Key = ?
+                    """
+                    update_values.append(transaction['Transaction_Key'])
+                    cursor.execute(update_query, tuple(update_values))
+                    rows_updated += 1
             
             logger.info(f"Updated {rows_updated} existing transactions")
         

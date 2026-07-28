@@ -27,6 +27,7 @@ def extract_clients(oltp_conn: OLTPConnection) -> list:
     """
     query = """
     SELECT 
+        c.Client_ID,
         c.CIN,
         c.Nom,
         c.Prenom,
@@ -65,16 +66,17 @@ def transform_clients(raw_data: list) -> list:
     
     for row in raw_data:
         transformed.append({
-            'CIN': row[0],
-            'Nom': row[1],
-            'Prenom': row[2],
-            'Date_Naissance': row[3],
-            'Email': row[4],
-            'Telephone': row[5],
-            'Adresse': row[6],
-            'Ville': row[7],
-            'Type_Client': row[8] if row[8] else 'Standard',
-            'Date_Creation': row[9]
+            'Client_ID_Source': row[0],
+            'CIN': row[1],
+            'Nom': row[2],
+            'Prenom': row[3],
+            'Date_Naissance': row[4],
+            'Email': row[5],
+            'Telephone': row[6],
+            'Adresse': row[7],
+            'Ville': row[8],
+            'Type_Client': row[9] if row[9] else 'Standard',
+            'Date_Creation': row[10]
         })
     
     logger.info(f"Transformed {len(transformed)} client records")
@@ -97,26 +99,42 @@ def load_dim_client(dwh_conn: DWHConnection, transformed_data: list) -> dict:
         logger.warning("No data to load")
         return {'inserted': 0, 'updated': 0}
     
-    # Get existing clients from DW
+    # Get existing clients from DW using Client_ID_Source (stable business key)
     existing_clients_query = """
-    SELECT Client_Key, CIN FROM CoreBanking_DW.dbo.Dim_Client
+    SELECT Client_Key, Client_ID_Source, CIN, Nom, Prenom, Date_Naissance, Email, Telephone, Adresse, Ville, Type_Client, Date_Creation 
+    FROM CoreBanking_DW.dbo.Dim_Client
     """
     existing_clients = {}
     
     try:
         existing_results = dwh_conn.execute_query(existing_clients_query)
-        existing_clients = {row[1]: row[0] for row in existing_results}
+        for row in existing_results:
+            if row[1] is not None:
+                existing_clients[row[1]] = {
+                    'Client_Key': row[0],
+                    'Client_ID_Source': row[1],
+                    'CIN': row[2],
+                    'Nom': row[3],
+                    'Prenom': row[4],
+                    'Date_Naissance': row[5],
+                    'Email': row[6],
+                    'Telephone': row[7],
+                    'Adresse': row[8],
+                    'Ville': row[9],
+                    'Type_Client': row[10],
+                    'Date_Creation': row[11]
+                }
         logger.info(f"Found {len(existing_clients)} existing clients in DW")
     except Exception as e:
         logger.warning(f"Could not fetch existing clients: {e}")
     
-    # Separate new and existing clients
     new_clients = []
     existing_clients_data = []
     
     for client in transformed_data:
-        if client['CIN'] in existing_clients:
-            client['Client_Key'] = existing_clients[client['CIN']]
+        client_id_source = client['Client_ID_Source']
+        if client_id_source in existing_clients:
+            client['Client_Key'] = existing_clients[client_id_source]['Client_Key']
             existing_clients_data.append(client)
         else:
             new_clients.append(client)
@@ -131,12 +149,13 @@ def load_dim_client(dwh_conn: DWHConnection, transformed_data: list) -> dict:
         if new_clients:
             insert_query = """
             INSERT INTO CoreBanking_DW.dbo.Dim_Client 
-            (CIN, Nom, Prenom, Date_Naissance, Email, Telephone, Adresse, Ville, Type_Client, Date_Creation)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (Client_ID_Source, CIN, Nom, Prenom, Date_Naissance, Email, Telephone, Adresse, Ville, Type_Client, Date_Creation)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             
             for client in new_clients:
                 cursor.execute(insert_query, (
+                    client['Client_ID_Source'],
                     client['CIN'],
                     client['Nom'],
                     client['Prenom'],
@@ -152,29 +171,65 @@ def load_dim_client(dwh_conn: DWHConnection, transformed_data: list) -> dict:
             
             logger.info(f"Inserted {rows_inserted} new clients")
         
-        # Update existing clients
+        # Update existing clients - only if values have changed
         if existing_clients_data:
-            update_query = """
-            UPDATE CoreBanking_DW.dbo.Dim_Client
-            SET Nom = ?, Prenom = ?, Date_Naissance = ?, Email = ?, 
-                Telephone = ?, Adresse = ?, Ville = ?, Type_Client = ?, Date_Creation = ?
-            WHERE Client_Key = ?
-            """
-            
             for client in existing_clients_data:
-                cursor.execute(update_query, (
-                    client['Nom'],
-                    client['Prenom'],
-                    client['Date_Naissance'],
-                    client['Email'],
-                    client['Telephone'],
-                    client['Adresse'],
-                    client['Ville'],
-                    client['Type_Client'],
-                    client['Date_Creation'],
-                    client['Client_Key']
-                ))
-                rows_updated += 1
+                existing = existing_clients[client['Client_ID_Source']]
+                
+                # Check if any column has changed
+                columns_to_update = []
+                update_values = []
+                
+                if str(client['CIN']) != str(existing['CIN']):
+                    columns_to_update.append('CIN = ?')
+                    update_values.append(client['CIN'])
+                
+                if str(client['Nom']) != str(existing['Nom']):
+                    columns_to_update.append('Nom = ?')
+                    update_values.append(client['Nom'])
+                
+                if str(client['Prenom']) != str(existing['Prenom']):
+                    columns_to_update.append('Prenom = ?')
+                    update_values.append(client['Prenom'])
+                
+                if str(client['Date_Naissance']) != str(existing['Date_Naissance']):
+                    columns_to_update.append('Date_Naissance = ?')
+                    update_values.append(client['Date_Naissance'])
+                
+                if str(client['Email'] if client['Email'] else '') != str(existing['Email'] if existing['Email'] else ''):
+                    columns_to_update.append('Email = ?')
+                    update_values.append(client['Email'])
+                
+                if str(client['Telephone'] if client['Telephone'] else '') != str(existing['Telephone'] if existing['Telephone'] else ''):
+                    columns_to_update.append('Telephone = ?')
+                    update_values.append(client['Telephone'])
+                
+                if str(client['Adresse'] if client['Adresse'] else '') != str(existing['Adresse'] if existing['Adresse'] else ''):
+                    columns_to_update.append('Adresse = ?')
+                    update_values.append(client['Adresse'])
+                
+                if str(client['Ville'] if client['Ville'] else '') != str(existing['Ville'] if existing['Ville'] else ''):
+                    columns_to_update.append('Ville = ?')
+                    update_values.append(client['Ville'])
+                
+                if str(client['Type_Client']) != str(existing['Type_Client']):
+                    columns_to_update.append('Type_Client = ?')
+                    update_values.append(client['Type_Client'])
+                
+                if str(client['Date_Creation']) != str(existing['Date_Creation']):
+                    columns_to_update.append('Date_Creation = ?')
+                    update_values.append(client['Date_Creation'])
+                
+                # Only execute UPDATE if at least one column changed
+                if columns_to_update:
+                    update_query = f"""
+                    UPDATE CoreBanking_DW.dbo.Dim_Client
+                    SET {', '.join(columns_to_update)}
+                    WHERE Client_Key = ?
+                    """
+                    update_values.append(client['Client_Key'])
+                    cursor.execute(update_query, tuple(update_values))
+                    rows_updated += 1
             
             logger.info(f"Updated {rows_updated} existing clients")
         

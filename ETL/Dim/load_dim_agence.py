@@ -87,13 +87,21 @@ def load_dim_agence(dwh_conn: DWHConnection, transformed_data: list) -> dict:
     
     # Get existing agences from DW
     existing_agences_query = """
-    SELECT Agence_Key, Code_Agence FROM CoreBanking_DW.dbo.Dim_Agence
+    SELECT Agence_Key, Code_Agence, Nom_Agence, Ville, Adresse, Telephone FROM CoreBanking_DW.dbo.Dim_Agence
     """
     existing_agences = {}
     
     try:
         existing_results = dwh_conn.execute_query(existing_agences_query)
-        existing_agences = {row[1]: row[0] for row in existing_results}
+        for row in existing_results:
+            existing_agences[row[1]] = {
+                'Agence_Key': row[0],
+                'Code_Agence': row[1],
+                'Nom_Agence': row[2],
+                'Ville': row[3],
+                'Adresse': row[4],
+                'Telephone': row[5]
+            }
         logger.info(f"Found {len(existing_agences)} existing agences in DW")
     except Exception as e:
         logger.warning(f"Could not fetch existing agences: {e}")
@@ -104,7 +112,7 @@ def load_dim_agence(dwh_conn: DWHConnection, transformed_data: list) -> dict:
     
     for agence in transformed_data:
         if agence['Code_Agence'] in existing_agences:
-            agence['Agence_Key'] = existing_agences[agence['Code_Agence']]
+            agence['Agence_Key'] = existing_agences[agence['Code_Agence']]['Agence_Key']
             existing_agences_data.append(agence)
         else:
             new_agences.append(agence)
@@ -135,23 +143,41 @@ def load_dim_agence(dwh_conn: DWHConnection, transformed_data: list) -> dict:
             
             logger.info(f"Inserted {rows_inserted} new agences")
         
-        # Update existing agences
+        # Update existing agences - only if values have changed
         if existing_agences_data:
-            update_query = """
-            UPDATE CoreBanking_DW.dbo.Dim_Agence
-            SET Nom_Agence = ?, Ville = ?, Adresse = ?, Telephone = ?
-            WHERE Agence_Key = ?
-            """
-            
             for agence in existing_agences_data:
-                cursor.execute(update_query, (
-                    agence['Nom_Agence'],
-                    agence['Ville'],
-                    agence['Adresse'],
-                    agence['Telephone'],
-                    agence['Agence_Key']
-                ))
-                rows_updated += 1
+                existing = existing_agences[agence['Code_Agence']]
+                
+                # Check if any column has changed
+                columns_to_update = []
+                update_values = []
+                
+                if str(agence['Nom_Agence']) != str(existing['Nom_Agence']):
+                    columns_to_update.append('Nom_Agence = ?')
+                    update_values.append(agence['Nom_Agence'])
+                
+                if str(agence['Ville']) != str(existing['Ville']):
+                    columns_to_update.append('Ville = ?')
+                    update_values.append(agence['Ville'])
+                
+                if str(agence['Adresse'] if agence['Adresse'] else '') != str(existing['Adresse'] if existing['Adresse'] else ''):
+                    columns_to_update.append('Adresse = ?')
+                    update_values.append(agence['Adresse'])
+                
+                if str(agence['Telephone'] if agence['Telephone'] else '') != str(existing['Telephone'] if existing['Telephone'] else ''):
+                    columns_to_update.append('Telephone = ?')
+                    update_values.append(agence['Telephone'])
+                
+                # Only execute UPDATE if at least one column changed
+                if columns_to_update:
+                    update_query = f"""
+                    UPDATE CoreBanking_DW.dbo.Dim_Agence
+                    SET {', '.join(columns_to_update)}
+                    WHERE Agence_Key = ?
+                    """
+                    update_values.append(agence['Agence_Key'])
+                    cursor.execute(update_query, tuple(update_values))
+                    rows_updated += 1
             
             logger.info(f"Updated {rows_updated} existing agences")
         

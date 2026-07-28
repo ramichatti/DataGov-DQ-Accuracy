@@ -27,6 +27,7 @@ def extract_comptes(oltp_conn: OLTPConnection) -> list:
     """
     query = """
     SELECT 
+        c.Compte_ID,
         c.Numero_Compte,
         tc.Libelle AS Type_Compte,
         d.Libelle AS Devise,
@@ -63,12 +64,13 @@ def transform_comptes(raw_data: list) -> list:
     
     for row in raw_data:
         transformed.append({
-            'Numero_Compte': row[0],
-            'Type_Compte': row[1] if row[1] else 'Standard',
-            'Devise': row[2] if row[2] else 'TND',
-            'Solde': row[3] if row[3] is not None else 0.00,
-            'Date_Ouverture': row[4],
-            'Statut': row[5] if row[5] else 'Actif'
+            'Compte_ID_Source': row[0],
+            'Numero_Compte': row[1],
+            'Type_Compte': row[2] if row[2] else 'Standard',
+            'Devise': row[3] if row[3] else 'TND',
+            'Solde': row[4] if row[4] is not None else 0.00,
+            'Date_Ouverture': row[5],
+            'Statut': row[6] if row[6] else 'Actif'
         })
     
     logger.info(f"Transformed {len(transformed)} compte records")
@@ -91,26 +93,37 @@ def load_dim_compte(dwh_conn: DWHConnection, transformed_data: list) -> dict:
         logger.warning("No data to load")
         return {'inserted': 0, 'updated': 0}
     
-    # Get existing comptes from DW
+    # Get existing comptes from DW using Compte_ID_Source (stable business key)
     existing_comptes_query = """
-    SELECT Compte_Key, Numero_Compte FROM CoreBanking_DW.dbo.Dim_Compte
+    SELECT Compte_Key, Compte_ID_Source, Numero_Compte, Type_Compte, Devise, Solde, Date_Ouverture, Statut FROM CoreBanking_DW.dbo.Dim_Compte
     """
     existing_comptes = {}
     
     try:
         existing_results = dwh_conn.execute_query(existing_comptes_query)
-        existing_comptes = {row[1]: row[0] for row in existing_results}
+        for row in existing_results:
+            if row[1] is not None:
+                existing_comptes[row[1]] = {
+                    'Compte_Key': row[0],
+                    'Compte_ID_Source': row[1],
+                    'Numero_Compte': row[2],
+                    'Type_Compte': row[3],
+                    'Devise': row[4],
+                    'Solde': row[5],
+                    'Date_Ouverture': row[6],
+                    'Statut': row[7]
+                }
         logger.info(f"Found {len(existing_comptes)} existing comptes in DW")
     except Exception as e:
         logger.warning(f"Could not fetch existing comptes: {e}")
     
-    # Separate new and existing comptes
     new_comptes = []
     existing_comptes_data = []
     
     for compte in transformed_data:
-        if compte['Numero_Compte'] in existing_comptes:
-            compte['Compte_Key'] = existing_comptes[compte['Numero_Compte']]
+        compte_id = compte['Compte_ID_Source']
+        if compte_id in existing_comptes:
+            compte['Compte_Key'] = existing_comptes[compte_id]['Compte_Key']
             existing_comptes_data.append(compte)
         else:
             new_comptes.append(compte)
@@ -125,12 +138,13 @@ def load_dim_compte(dwh_conn: DWHConnection, transformed_data: list) -> dict:
         if new_comptes:
             insert_query = """
             INSERT INTO CoreBanking_DW.dbo.Dim_Compte 
-            (Numero_Compte, Type_Compte, Devise, Solde, Date_Ouverture, Statut)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (Compte_ID_Source, Numero_Compte, Type_Compte, Devise, Solde, Date_Ouverture, Statut)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """
             
             for compte in new_comptes:
                 cursor.execute(insert_query, (
+                    compte['Compte_ID_Source'],
                     compte['Numero_Compte'],
                     compte['Type_Compte'],
                     compte['Devise'],
@@ -142,24 +156,45 @@ def load_dim_compte(dwh_conn: DWHConnection, transformed_data: list) -> dict:
             
             logger.info(f"Inserted {rows_inserted} new comptes")
         
-        # Update existing comptes
+        # Update existing comptes - only if values have changed
         if existing_comptes_data:
-            update_query = """
-            UPDATE CoreBanking_DW.dbo.Dim_Compte
-            SET Type_Compte = ?, Devise = ?, Solde = ?, Date_Ouverture = ?, Statut = ?
-            WHERE Compte_Key = ?
-            """
-            
             for compte in existing_comptes_data:
-                cursor.execute(update_query, (
-                    compte['Type_Compte'],
-                    compte['Devise'],
-                    compte['Solde'],
-                    compte['Date_Ouverture'],
-                    compte['Statut'],
-                    compte['Compte_Key']
-                ))
-                rows_updated += 1
+                existing = existing_comptes[compte['Compte_ID_Source']]
+                
+                # Check if any column has changed
+                columns_to_update = []
+                update_values = []
+                
+                if str(compte['Type_Compte']) != str(existing['Type_Compte']):
+                    columns_to_update.append('Type_Compte = ?')
+                    update_values.append(compte['Type_Compte'])
+                
+                if str(compte['Devise']) != str(existing['Devise']):
+                    columns_to_update.append('Devise = ?')
+                    update_values.append(compte['Devise'])
+                
+                if str(compte['Solde']) != str(existing['Solde']):
+                    columns_to_update.append('Solde = ?')
+                    update_values.append(compte['Solde'])
+                
+                if str(compte['Date_Ouverture']) != str(existing['Date_Ouverture']):
+                    columns_to_update.append('Date_Ouverture = ?')
+                    update_values.append(compte['Date_Ouverture'])
+                
+                if str(compte['Statut']) != str(existing['Statut']):
+                    columns_to_update.append('Statut = ?')
+                    update_values.append(compte['Statut'])
+                
+                # Only execute UPDATE if at least one column changed
+                if columns_to_update:
+                    update_query = f"""
+                    UPDATE CoreBanking_DW.dbo.Dim_Compte
+                    SET {', '.join(columns_to_update)}
+                    WHERE Compte_Key = ?
+                    """
+                    update_values.append(compte['Compte_Key'])
+                    cursor.execute(update_query, tuple(update_values))
+                    rows_updated += 1
             
             logger.info(f"Updated {rows_updated} existing comptes")
         

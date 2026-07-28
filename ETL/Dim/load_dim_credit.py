@@ -27,6 +27,7 @@ def extract_credits(oltp_conn: OLTPConnection) -> list:
     """
     query = """
     SELECT 
+        Credit_ID,
         Type_Credit,
         Montant,
         Duree_Mois,
@@ -59,12 +60,13 @@ def transform_credits(raw_data: list) -> list:
     
     for row in raw_data:
         transformed.append({
-            'Type_Credit': row[0] if row[0] else 'Standard',
-            'Montant': row[1] if row[1] is not None else 0.00,
-            'Duree_Mois': row[2] if row[2] is not None else 0,
-            'Taux_Interet': row[3] if row[3] is not None else 0.00,
-            'Date_Debut': row[4],
-            'Statut': row[5] if row[5] else 'En cours'
+            'Credit_ID_Source': row[0],
+            'Type_Credit': row[1] if row[1] else 'Standard',
+            'Montant': row[2] if row[2] is not None else 0.00,
+            'Duree_Mois': row[3] if row[3] is not None else 0,
+            'Taux_Interet': row[4] if row[4] is not None else 0.00,
+            'Date_Debut': row[5],
+            'Statut': row[6] if row[6] else 'En cours'
         })
     
     logger.info(f"Transformed {len(transformed)} credit records")
@@ -87,30 +89,37 @@ def load_dim_credit(dwh_conn: DWHConnection, transformed_data: list) -> dict:
         logger.warning("No data to load")
         return {'inserted': 0, 'updated': 0}
     
-    # Since Credit doesn't have a unique business key like CIN or Code_Agence,
-    # we'll use a composite key for matching: Type_Credit + Montant + Date_Debut
+    # Get existing credits from DW using Credit_ID_Source (stable business key)
     existing_credits_query = """
-    SELECT Credit_Key, Type_Credit, Montant, Date_Debut FROM CoreBanking_DW.dbo.Dim_Credit
+    SELECT Credit_Key, Credit_ID_Source, Type_Credit, Montant, Duree_Mois, Taux_Interet, Date_Debut, Statut FROM CoreBanking_DW.dbo.Dim_Credit
     """
     existing_credits = {}
     
     try:
         existing_results = dwh_conn.execute_query(existing_credits_query)
         for row in existing_results:
-            composite_key = f"{row[1]}|{row[2]}|{row[3]}"
-            existing_credits[composite_key] = row[0]
+            if row[1] is not None:
+                existing_credits[row[1]] = {
+                    'Credit_Key': row[0],
+                    'Credit_ID_Source': row[1],
+                    'Type_Credit': row[2],
+                    'Montant': row[3],
+                    'Duree_Mois': row[4],
+                    'Taux_Interet': row[5],
+                    'Date_Debut': row[6],
+                    'Statut': row[7]
+                }
         logger.info(f"Found {len(existing_credits)} existing credits in DW")
     except Exception as e:
         logger.warning(f"Could not fetch existing credits: {e}")
     
-    # Separate new and existing credits
     new_credits = []
     existing_credits_data = []
     
     for credit in transformed_data:
-        composite_key = f"{credit['Type_Credit']}|{credit['Montant']}|{credit['Date_Debut']}"
-        if composite_key in existing_credits:
-            credit['Credit_Key'] = existing_credits[composite_key]
+        credit_id = credit['Credit_ID_Source']
+        if credit_id in existing_credits:
+            credit['Credit_Key'] = existing_credits[credit_id]['Credit_Key']
             existing_credits_data.append(credit)
         else:
             new_credits.append(credit)
@@ -125,12 +134,13 @@ def load_dim_credit(dwh_conn: DWHConnection, transformed_data: list) -> dict:
         if new_credits:
             insert_query = """
             INSERT INTO CoreBanking_DW.dbo.Dim_Credit 
-            (Type_Credit, Montant, Duree_Mois, Taux_Interet, Date_Debut, Statut)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (Credit_ID_Source, Type_Credit, Montant, Duree_Mois, Taux_Interet, Date_Debut, Statut)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """
             
             for credit in new_credits:
                 cursor.execute(insert_query, (
+                    credit['Credit_ID_Source'],
                     credit['Type_Credit'],
                     credit['Montant'],
                     credit['Duree_Mois'],
@@ -142,23 +152,41 @@ def load_dim_credit(dwh_conn: DWHConnection, transformed_data: list) -> dict:
             
             logger.info(f"Inserted {rows_inserted} new credits")
         
-        # Update existing credits
+        # Update existing credits - only if values have changed
         if existing_credits_data:
-            update_query = """
-            UPDATE CoreBanking_DW.dbo.Dim_Credit
-            SET Montant = ?, Duree_Mois = ?, Taux_Interet = ?, Statut = ?
-            WHERE Credit_Key = ?
-            """
-            
             for credit in existing_credits_data:
-                cursor.execute(update_query, (
-                    credit['Montant'],
-                    credit['Duree_Mois'],
-                    credit['Taux_Interet'],
-                    credit['Statut'],
-                    credit['Credit_Key']
-                ))
-                rows_updated += 1
+                existing = existing_credits[credit['Credit_ID_Source']]
+                
+                # Check if any column has changed
+                columns_to_update = []
+                update_values = []
+                
+                if str(credit['Montant']) != str(existing['Montant']):
+                    columns_to_update.append('Montant = ?')
+                    update_values.append(credit['Montant'])
+                
+                if str(credit['Duree_Mois']) != str(existing['Duree_Mois']):
+                    columns_to_update.append('Duree_Mois = ?')
+                    update_values.append(credit['Duree_Mois'])
+                
+                if str(credit['Taux_Interet']) != str(existing['Taux_Interet']):
+                    columns_to_update.append('Taux_Interet = ?')
+                    update_values.append(credit['Taux_Interet'])
+                
+                if str(credit['Statut']) != str(existing['Statut']):
+                    columns_to_update.append('Statut = ?')
+                    update_values.append(credit['Statut'])
+                
+                # Only execute UPDATE if at least one column changed
+                if columns_to_update:
+                    update_query = f"""
+                    UPDATE CoreBanking_DW.dbo.Dim_Credit
+                    SET {', '.join(columns_to_update)}
+                    WHERE Credit_Key = ?
+                    """
+                    update_values.append(credit['Credit_Key'])
+                    cursor.execute(update_query, tuple(update_values))
+                    rows_updated += 1
             
             logger.info(f"Updated {rows_updated} existing credits")
         

@@ -106,78 +106,34 @@ class TransactionQualityEngine(BaseQualityEngine):
                     # Set Date_Key
                     issue.date_key = self.get_date_key(date_transaction)
                     
-                    # Set Transaction_Key from DW
+                    # Set Transaction_Key from DW using Transaction_ID_Source
                     issue.transaction_key = self.get_transaction_key_by_id(issue.ligne_id)
                     
-                    # Get Compte_Key and related keys from DW via Compte
+                    # Get Compte_Key (via Compte_ID_Source) and related keys
                     if compte_id:
+                        issue.compte_key = self.get_compte_key_by_id(compte_id)
+                        
                         compte_query = f"""
-                        SELECT Numero_Compte, Client_ID 
+                        SELECT Client_ID 
                         FROM CoreBanking_OLTP.dbo.Compte 
                         WHERE Compte_ID = {compte_id}
                         """
                         compte_results = self.oltp_conn.execute_query(compte_query)
-                        if compte_results:
-                            numero_compte = compte_results[0][0]
-                            client_id = compte_results[0][1]
+                        if compte_results and compte_results[0][0]:
+                            client_id = compte_results[0][0]
+                            issue.client_key = self.get_client_key_by_id(client_id)
                             
-                            issue.compte_key = self.get_compte_key_by_numero(numero_compte)
-                            
-                            # Get Client_Key and Agence_Key via Client
-                            if client_id:
-                                client_query = f"SELECT CIN, Agence_ID FROM CoreBanking_OLTP.dbo.Client WHERE Client_ID = {client_id}"
-                                client_results = self.oltp_conn.execute_query(client_query)
-                                if client_results:
-                                    cin = client_results[0][0]
-                                    agence_id = client_results[0][1]
-                                    
-                                    issue.client_key = self.get_client_key_by_cin(cin)
-                                    
-                                    if agence_id:
-                                        agence_query = f"SELECT Code_Agence FROM CoreBanking_OLTP.dbo.Agence WHERE Agence_ID = {agence_id}"
-                                        agence_results = self.oltp_conn.execute_query(agence_query)
-                                        if agence_results:
-                                            issue.agence_key = self.get_agence_key_by_code(agence_results[0][0])
+                            client_query = f"SELECT Agence_ID FROM CoreBanking_OLTP.dbo.Client WHERE Client_ID = {client_id}"
+                            client_results = self.oltp_conn.execute_query(client_query)
+                            if client_results and client_results[0][0]:
+                                agence_id = client_results[0][0]
+                                agence_query = f"SELECT Code_Agence FROM CoreBanking_OLTP.dbo.Agence WHERE Agence_ID = {agence_id}"
+                                agence_results = self.oltp_conn.execute_query(agence_query)
+                                if agence_results:
+                                    issue.agence_key = self.get_agence_key_by_code(agence_results[0][0])
                 
             except Exception as e:
                 logger.warning(f"Could not enrich issue {issue.ligne_id}: {e}")
-    
-    def get_transaction_key_by_id(self, transaction_id: int) -> int:
-        """Get Transaction_Key from DW Dim_Transaction by matching transaction attributes"""
-        try:
-            # Get transaction details from OLTP
-            query = f"""
-            SELECT tb.Montant, tb.Date_Transaction, tb.Reference_Transaction, ct.Libelle AS Canal, tb.Type_Transaction
-            FROM CoreBanking_OLTP.dbo.Transaction_Bancaire tb
-            LEFT JOIN CoreBanking_OLTP.dbo.Canal_Transaction ct ON tb.Canal_ID = ct.Canal_ID
-            WHERE tb.Transaction_ID = {transaction_id}
-            """
-            results = self.oltp_conn.execute_query(query)
-            if results:
-                row = results[0]
-                montant = row[0]
-                date_transaction = row[1]
-                reference = row[2] if row[2] else ''
-                canal = row[3] if row[3] else 'Standard'
-                type_trans = row[4] if row[4] else 'Standard'
-                
-                # Match in DW using business attributes
-                dw_query = f"""
-                SELECT Transaction_Key 
-                FROM CoreBanking_DW.dbo.Dim_Transaction 
-                WHERE Montant = {montant} 
-                AND Date_Transaction = '{date_transaction}'
-                AND Reference = '{reference}'
-                AND Canal = '{canal}'
-                AND Type_Transaction = '{type_trans}'
-                """
-                dw_results = self.dwh_conn.execute_query(dw_query)
-                if dw_results:
-                    return dw_results[0][0]
-            return None
-        except Exception as e:
-            logger.warning(f"Could not get Transaction_Key for ID {transaction_id}: {e}")
-            return None
 
 
 if __name__ == "__main__":

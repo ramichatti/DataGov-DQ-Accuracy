@@ -120,59 +120,24 @@ class CreditQualityEngine(BaseQualityEngine):
                     # Set Date_Key
                     issue.date_key = self.get_date_key(date_debut)
                     
-                    # Set Credit_Key from DW
+                    # Set Credit_Key from DW using Credit_ID_Source
                     issue.credit_key = self.get_credit_key_by_id(issue.ligne_id)
                     
-                    # Get Client_Key and Agence_Key via Client
+                    # Get Client_Key (via Client_ID_Source) and Agence_Key via Client
                     if client_id:
-                        client_query = f"SELECT CIN, Agence_ID FROM CoreBanking_OLTP.dbo.Client WHERE Client_ID = {client_id}"
+                        issue.client_key = self.get_client_key_by_id(client_id)
+                        
+                        client_query = f"SELECT Agence_ID FROM CoreBanking_OLTP.dbo.Client WHERE Client_ID = {client_id}"
                         client_results = self.oltp_conn.execute_query(client_query)
-                        if client_results:
-                            cin = client_results[0][0]
-                            agence_id = client_results[0][1]
-                            
-                            issue.client_key = self.get_client_key_by_cin(cin)
-                            
-                            if agence_id:
-                                agence_query = f"SELECT Code_Agence FROM CoreBanking_OLTP.dbo.Agence WHERE Agence_ID = {agence_id}"
-                                agence_results = self.oltp_conn.execute_query(agence_query)
-                                if agence_results:
-                                    issue.agence_key = self.get_agence_key_by_code(agence_results[0][0])
+                        if client_results and client_results[0][0]:
+                            agence_id = client_results[0][0]
+                            agence_query = f"SELECT Code_Agence FROM CoreBanking_OLTP.dbo.Agence WHERE Agence_ID = {agence_id}"
+                            agence_results = self.oltp_conn.execute_query(agence_query)
+                            if agence_results:
+                                issue.agence_key = self.get_agence_key_by_code(agence_results[0][0])
                 
             except Exception as e:
                 logger.warning(f"Could not enrich issue {issue.ligne_id}: {e}")
-    
-    def get_credit_key_by_id(self, credit_id: int) -> int:
-        """Get Credit_Key from DW Dim_Credit by matching credit attributes"""
-        try:
-            # Get credit details from OLTP
-            query = f"""
-            SELECT Type_Credit, Montant, Date_Debut
-            FROM CoreBanking_OLTP.dbo.Credit 
-            WHERE Credit_ID = {credit_id}
-            """
-            results = self.oltp_conn.execute_query(query)
-            if results:
-                row = results[0]
-                type_credit = row[0] if row[0] else 'Standard'
-                montant = row[1]
-                date_debut = row[2]
-                
-                # Match in DW using composite key (Type_Credit + Montant + Date_Debut)
-                dw_query = f"""
-                SELECT Credit_Key 
-                FROM CoreBanking_DW.dbo.Dim_Credit 
-                WHERE Type_Credit = '{type_credit}' 
-                AND Montant = {montant} 
-                AND Date_Debut = '{date_debut}'
-                """
-                dw_results = self.dwh_conn.execute_query(dw_query)
-                if dw_results:
-                    return dw_results[0][0]
-            return None
-        except Exception as e:
-            logger.warning(f"Could not get Credit_Key for ID {credit_id}: {e}")
-            return None
 
 
 if __name__ == "__main__":
