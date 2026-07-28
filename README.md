@@ -127,11 +127,12 @@ The pipeline loads all dimensions then runs quality checks. Previous unresolved 
 Schedule the ETL to run every 15 minutes:
 
 ```powershell
+# Run as Administrator, then:
 # Default: runs every 15 minutes
-powershell -ExecutionPolicy Bypass -File scripts\schedule_etl.ps1
+.\scripts\schedule_etl.ps1
 
 # Custom interval and path
-powershell -ExecutionPolicy Bypass -File scripts\schedule_etl.ps1 -ProjectPath "C:\Your\Path" -IntervalMinutes 30
+.\scripts\schedule_etl.ps1 -ProjectPath "C:\Your\Path" -IntervalMinutes 30
 ```
 
 This creates a Windows scheduled task named `DataGov_DQ_ETL` that executes `main.py` at the specified interval. Logs are written to `logs\etl_YYYYMMDD.log`.

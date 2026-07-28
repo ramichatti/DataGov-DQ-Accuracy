@@ -3,6 +3,13 @@ param(
     [int]$IntervalMinutes = 15
 )
 
+# Requires admin rights to register a scheduled task
+if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Host "This script must be run as Administrator. Restarting..."
+    Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -NoProfile -File `"$PSCommandPath`" -ProjectPath `"$ProjectPath`" -IntervalMinutes $IntervalMinutes"
+    exit
+}
+
 $TaskName = "DataGov_DQ_ETL"
 $ScriptPath = "$ProjectPath\scripts\run_etl.bat"
 $PythonPath = (Get-Command python).Source
@@ -18,7 +25,8 @@ if (-not (Test-Path "$ProjectPath\logs")) {
 }
 
 $Action = New-ScheduledTaskAction -Execute $ScriptPath
-$Trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) -At (Get-Date).AddMinutes(1) -RepetitionDuration ([TimeSpan]::MaxValue)
+$StartTime = (Get-Date).AddMinutes(1).ToString("HH:mm")
+$Trigger = New-ScheduledTaskTrigger -Once -At $StartTime -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) -RepetitionDuration ([TimeSpan]::FromDays(365))
 $Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopIfGoingOnBatteries -AllowStartIfOnBatteries
 
