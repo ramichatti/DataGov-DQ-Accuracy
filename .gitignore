@@ -1,0 +1,9 @@
+PowerBI/
+
+__pycache__/
+*.pyc
+venv/
+.venv/
+.env
+*.tmp
+*.log
