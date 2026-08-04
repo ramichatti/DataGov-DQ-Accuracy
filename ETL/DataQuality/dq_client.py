@@ -23,8 +23,6 @@ class ClientQualityEngine(BaseQualityEngine):
             'telephone_format_tunisia': 0,
             'email_format_accuracy': 0,
             'date_naissance_reasonable': 0,
-            'ville_manquante': 0,
-            'age_type_client_coherence': 0,
             'total_issues': 0
         }
 
@@ -73,30 +71,6 @@ class ClientQualityEngine(BaseQualityEngine):
         results['date_naissance_reasonable'] = self.check_accuracy_validation(
             'Client', 'Date_Naissance', query, 'Between 1900-01-01 and 18 years ago', 'High',
             'Birth date must be reasonable (not in future, not before 1900, client must be 18+)'
-        )
-
-        query = """
-        SELECT Client_ID, Adresse, Ville
-        FROM CoreBanking_OLTP.dbo.Client
-        WHERE (Adresse IS NOT NULL AND Adresse <> '')
-        AND (Ville IS NULL OR Ville = '')
-        """
-        results['ville_manquante'] = self.check_accuracy_validation(
-            'Client', 'Ville', query, 'Ville should not be empty when Adresse is provided', 'Medium',
-            'Client has an address but missing city information'
-        )
-
-        query = """
-        SELECT c.Client_ID, c.Date_Naissance, tc.Libelle
-        FROM CoreBanking_OLTP.dbo.Client c
-        JOIN CoreBanking_OLTP.dbo.Type_Client tc ON c.Type_Client_ID = tc.Type_Client_ID
-        WHERE c.Date_Naissance IS NOT NULL
-        AND tc.Libelle IN ('Entreprise', 'Cooperative')
-        AND DATEDIFF(YEAR, c.Date_Naissance, GETDATE()) < 18
-        """
-        results['age_type_client_coherence'] = self.check_accuracy_validation(
-            'Client', 'Date_Naissance', query, 'Company-type clients must be 18+', 'High',
-            'Client classified as Entreprise/Cooperative but is under 18'
         )
 
         self.enrich_issues_with_dimension_keys()

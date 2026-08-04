@@ -1,0 +1,387 @@
+-- DAX Measures for Data Quality Accuracy Dashboard
+-- Tableau de Bord de Qualité des Données
+
+-- ============================================
+-- GLOBAL ACCURACY SCORE
+-- ============================================
+Accuracy Score Global = 
+VAR TotalRecords = 
+    COUNTROWS(Dim_Client) + 
+    COUNTROWS(Dim_Compte) + 
+    COUNTROWS(Dim_Transaction) + 
+    COUNTROWS(Dim_Credit)
+
+VAR TotalIssues = COUNTROWS(Fact_Accuracy)
+
+VAR AccuracyScore = 
+    IF(
+        TotalRecords > 0,
+        DIVIDE(TotalRecords - TotalIssues, TotalRecords) * 100,
+        0
+    )
+
+RETURN
+    FORMAT(AccuracyScore, "0.00") & "%"
+
+-- ============================================
+-- SLA COMPLIANCE (>= 95%)
+-- ============================================
+SLA Compliance = 
+VAR TotalRecords = 
+    COUNTROWS(Dim_Client) + 
+    COUNTROWS(Dim_Compte) + 
+    COUNTROWS(Dim_Transaction) + 
+    COUNTROWS(Dim_Credit)
+
+VAR TotalIssues = COUNTROWS(Fact_Accuracy)
+
+VAR AccuracyScore = 
+    IF(
+        TotalRecords > 0,
+        DIVIDE(TotalRecords - TotalIssues, TotalRecords) * 100,
+        0
+    )
+
+RETURN
+    IF(
+        AccuracyScore >= 95,
+        "PASS",
+        "NON"
+    )
+
+-- ============================================
+-- VALID RECORDS
+-- ============================================
+Valid Records = 
+VAR TotalRecords = 
+    COUNTROWS(Dim_Client) + 
+    COUNTROWS(Dim_Compte) + 
+    COUNTROWS(Dim_Transaction) + 
+    COUNTROWS(Dim_Credit)
+
+VAR InvalidCount = COUNTROWS(Fact_Accuracy)
+
+RETURN
+    TotalRecords - InvalidCount
+
+-- ============================================
+-- INVALID RECORDS
+-- ============================================
+Invalid Records = COUNTROWS(Fact_Accuracy)
+
+-- ============================================
+-- AGENCY ACCURACY % (For Agence_Name Histogram)
+-- ============================================
+Agency Accuracy % = 
+VAR TotalIssues = COUNTROWS(Fact_Accuracy)
+
+VAR IssuesByAgency = 
+    COUNTROWS(
+        FILTER(
+            Fact_Accuracy, 
+            Fact_Accuracy[Agence_Key] = MAX(Dim_Agence[Agence_Key])
+        )
+    )
+
+VAR TotalRecordsByAgency = 
+    DIVIDE(IssuesByAgency, TotalIssues) * 
+    (COUNTROWS(Dim_Client) + COUNTROWS(Dim_Compte) + COUNTROWS(Dim_Transaction) + COUNTROWS(Dim_Credit))
+
+VAR AccuracyScore = 
+    IF(
+        TotalRecordsByAgency > 0,
+        DIVIDE(TotalRecordsByAgency - IssuesByAgency, TotalRecordsByAgency) * 100,
+        100
+    )
+
+RETURN
+    AccuracyScore
+
+-- ============================================
+-- ACCURACY BY MONTH
+-- ============================================
+Accuracy by Month = 
+VAR TotalIssues = COUNTROWS(Fact_Accuracy)
+
+VAR TotalRecords = 
+    COUNTROWS(Dim_Client) + 
+    COUNTROWS(Dim_Compte) + 
+    COUNTROWS(Dim_Transaction) + 
+    COUNTROWS(Dim_Credit)
+
+VAR AccuracyScore = 
+    IF(
+        TotalRecords > 0,
+        DIVIDE(TotalRecords - TotalIssues, TotalRecords) * 100,
+        0
+    )
+
+RETURN
+    AccuracyScore
+
+-- ============================================
+-- CLIENT ACCURACY SCORE
+-- ============================================
+Client Accuracy Score = 
+VAR TotalClients = COUNTROWS(Dim_Client)
+VAR ClientIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Client"))
+VAR Accuracy = IF(TotalClients > 0, DIVIDE(TotalClients - ClientIssues, TotalClients) * 100, 0)
+RETURN FORMAT(Accuracy, "0.00") & "%"
+
+-- ============================================
+-- CLIENT INVALID RECORDS
+-- ============================================
+Client Invalid Records = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Client"))
+
+-- ============================================
+-- CLIENT VALID RECORDS
+-- ============================================
+Client Valid Records = 
+VAR TotalClients = COUNTROWS(Dim_Client)
+VAR ClientIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Client"))
+RETURN TotalClients - ClientIssues
+
+-- ============================================
+-- CLIENT SLA COMPLIANCE (>= 95%)
+-- ============================================
+Client SLA Compliance = 
+VAR TotalClients = COUNTROWS(Dim_Client)
+VAR ClientIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Client"))
+VAR AccuracyScore = IF(TotalClients > 0, DIVIDE(TotalClients - ClientIssues, TotalClients) * 100, 0)
+RETURN
+    IF(
+        AccuracyScore >= 95,
+        "PASS",
+        "NON"
+    )
+
+-- ============================================
+-- AGENCY ACCURACY % FOR CLIENT TABLE
+-- ============================================
+Agency Client Accuracy % =
+VAR TotalClientIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Client"))
+
+VAR ClientIssuesByAgency = COUNTROWS(
+    FILTER(
+        Fact_Accuracy,
+        Fact_Accuracy[Table_Name] = "Client" &&
+        Fact_Accuracy[Agence_Key] = MAX(Dim_Agence[Agence_Key])
+    )
+)
+
+VAR TotalClients = COUNTROWS(Dim_Client)
+
+VAR ClientsByAgency =
+    DIVIDE(ClientIssuesByAgency, TotalClientIssues) * TotalClients
+
+VAR AccuracyScore =
+    IF(
+        ClientsByAgency > 0,
+        DIVIDE(ClientsByAgency - ClientIssuesByAgency, ClientsByAgency) * 100,
+        100
+    )
+
+RETURN
+    AccuracyScore
+
+-- ============================================
+-- COMPTE ACCURACY SCORE
+-- ============================================
+Compte Accuracy Score =
+VAR TotalComptes = COUNTROWS(Dim_Compte)
+VAR CompteIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Compte"))
+VAR Accuracy = IF(TotalComptes > 0, DIVIDE(TotalComptes - CompteIssues, TotalComptes) * 100, 0)
+RETURN FORMAT(Accuracy, "0.00") & "%"
+
+-- ============================================
+-- TOTAL COMPTES
+-- ============================================
+Total Comptes = COUNTROWS(Dim_Compte)
+
+-- ============================================
+-- COMPTE INVALID RECORDS
+-- ============================================
+Compte Invalid Records = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Compte"))
+
+-- ============================================
+-- COMPTE VALID RECORDS
+-- ============================================
+Compte Valid Records =
+VAR TotalComptes = COUNTROWS(Dim_Compte)
+VAR CompteIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Compte"))
+RETURN TotalComptes - CompteIssues
+
+-- ============================================
+-- COMPTE SLA COMPLIANCE (>= 95%)
+-- ============================================
+Compte SLA Compliance =
+VAR TotalComptes = COUNTROWS(Dim_Compte)
+VAR CompteIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Compte"))
+VAR AccuracyScore = IF(TotalComptes > 0, DIVIDE(TotalComptes - CompteIssues, TotalComptes) * 100, 0)
+RETURN
+    IF(
+        AccuracyScore >= 95,
+        "PASS",
+        "NON"
+    )
+
+-- ============================================
+-- TYPE COMPTE ACCURACY % (For Type_Compte Histogram)
+-- ============================================
+Type Compte Accuracy % =
+VAR TotalCompteIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Compte"))
+
+VAR CompteIssuesByType = COUNTROWS(
+    FILTER(
+        Fact_Accuracy,
+        Fact_Accuracy[Table_Name] = "Compte" &&
+        Fact_Accuracy[Compte_Key] IN (
+            SELECTCOLUMNS(
+                FILTER(Dim_Compte, Dim_Compte[Type_Compte] = MAX(Dim_Compte[Type_Compte])),
+                "Compte_Key", Dim_Compte[Compte_Key]
+            )
+        )
+    )
+)
+
+VAR TotalComptesByType = COUNTROWS(FILTER(Dim_Compte, Dim_Compte[Type_Compte] = MAX(Dim_Compte[Type_Compte])))
+
+VAR AccuracyScore =
+    IF(
+        TotalComptesByType > 0,
+        DIVIDE(TotalComptesByType - CompteIssuesByType, TotalComptesByType) * 100,
+        100
+    )
+
+RETURN
+    AccuracyScore
+
+-- ============================================
+-- COMPTE ACCURACY BY MONTH
+-- ============================================
+Compte Accuracy by Month =
+VAR TotalComptes = COUNTROWS(Dim_Compte)
+VAR CompteIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Compte"))
+VAR AccuracyScore =
+    IF(
+        TotalComptes > 0,
+        DIVIDE(TotalComptes - CompteIssues, TotalComptes) * 100,
+        0
+    )
+
+RETURN
+    AccuracyScore
+
+-- ============================================
+-- TRANSACTION ACCURACY SCORE
+-- ============================================
+Transaction Accuracy Score =
+VAR TotalTransactions = COUNTROWS(Dim_Transaction)
+VAR TransactionIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Transaction"))
+VAR Accuracy = IF(TotalTransactions > 0, DIVIDE(TotalTransactions - TransactionIssues, TotalTransactions) * 100, 0)
+RETURN FORMAT(Accuracy, "0.00") & "%"
+
+-- ============================================
+-- TRANSACTION INVALID RECORDS
+-- ============================================
+Transaction Invalid Records = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Transaction"))
+
+-- ============================================
+-- TRANSACTION VALID RECORDS
+-- ============================================
+Transaction Valid Records =
+VAR TotalTransactions = COUNTROWS(Dim_Transaction)
+VAR TransactionIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Transaction"))
+RETURN TotalTransactions - TransactionIssues
+
+-- ============================================
+-- TRANSACTION SLA COMPLIANCE (>= 95%)
+-- ============================================
+Transaction SLA Compliance =
+VAR TotalTransactions = COUNTROWS(Dim_Transaction)
+VAR TransactionIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Transaction"))
+VAR AccuracyScore = IF(TotalTransactions > 0, DIVIDE(TotalTransactions - TransactionIssues, TotalTransactions) * 100, 0)
+RETURN
+    IF(
+        AccuracyScore >= 95,
+        "PASS",
+        "NON"
+    )
+
+-- ============================================
+-- TRANSACTION ACCURACY BY MONTH
+-- ============================================
+Transaction Accuracy by Month =
+VAR TotalTransactions = COUNTROWS(Dim_Transaction)
+VAR TransactionIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Transaction"))
+VAR AccuracyScore =
+    IF(
+        TotalTransactions > 0,
+        DIVIDE(TotalTransactions - TransactionIssues, TotalTransactions) * 100,
+        0
+    )
+
+RETURN
+    AccuracyScore
+
+-- ============================================
+-- TYPE TRANSACTION ACCURACY % (For Type_Transaction Histogram)
+-- ============================================
+Type Transaction Accuracy % =
+VAR TotalTransactionIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Transaction"))
+
+VAR TransactionIssuesByType = COUNTROWS(
+    FILTER(
+        Fact_Accuracy,
+        Fact_Accuracy[Table_Name] = "Transaction" &&
+        Fact_Accuracy[Transaction_Key] IN (
+            SELECTCOLUMNS(
+                FILTER(Dim_Transaction, Dim_Transaction[Type_Transaction] = MAX(Dim_Transaction[Type_Transaction])),
+                "Transaction_Key", Dim_Transaction[Transaction_Key]
+            )
+        )
+    )
+)
+
+VAR TotalTransactionsByType = COUNTROWS(FILTER(Dim_Transaction, Dim_Transaction[Type_Transaction] = MAX(Dim_Transaction[Type_Transaction])))
+
+VAR AccuracyScore =
+    IF(
+        TotalTransactionsByType > 0,
+        DIVIDE(TotalTransactionsByType - TransactionIssuesByType, TotalTransactionsByType) * 100,
+        100
+    )
+
+RETURN
+    AccuracyScore
+
+-- ============================================
+-- CANAL TRANSACTION ACCURACY % (For Canal Histogram)
+-- ============================================
+Canal Transaction Accuracy % =
+VAR TotalTransactionIssues = COUNTROWS(FILTER(Fact_Accuracy, Fact_Accuracy[Table_Name] = "Transaction"))
+
+VAR TransactionIssuesByCanal = COUNTROWS(
+    FILTER(
+        Fact_Accuracy,
+        Fact_Accuracy[Table_Name] = "Transaction" &&
+        Fact_Accuracy[Transaction_Key] IN (
+            SELECTCOLUMNS(
+                FILTER(Dim_Transaction, Dim_Transaction[Canal] = MAX(Dim_Transaction[Canal])),
+                "Transaction_Key", Dim_Transaction[Transaction_Key]
+            )
+        )
+    )
+)
+
+VAR TotalTransactionsByCanal = COUNTROWS(FILTER(Dim_Transaction, Dim_Transaction[Canal] = MAX(Dim_Transaction[Canal])))
+
+VAR AccuracyScore =
+    IF(
+        TotalTransactionsByCanal > 0,
+        DIVIDE(TotalTransactionsByCanal - TransactionIssuesByCanal, TotalTransactionsByCanal) * 100,
+        100
+    )
+
+RETURN
+    AccuracyScore

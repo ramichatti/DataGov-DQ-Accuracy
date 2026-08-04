@@ -22,9 +22,6 @@ class TransactionQualityEngine(BaseQualityEngine):
             'montant_extreme_values': 0,
             'montant_decimal_precision': 0,
             'date_transaction_reasonable': 0,
-            'montant_type_consistency': 0,
-            'transaction_sans_reference': 0,
-            'transaction_compte_cloture': 0,
             'total_issues': 0
         }
 
@@ -59,37 +56,6 @@ class TransactionQualityEngine(BaseQualityEngine):
         results['date_transaction_reasonable'] = self.check_accuracy_validation(
             'Transaction_Bancaire', 'Date_Transaction', query, 'Between 2000-01-01 and current date', 'High',
             'Transaction date must be reasonable (not in future, not before year 2000)'
-        )
-
-        query = """
-        SELECT Transaction_ID, Montant, Type_Transaction
-        FROM CoreBanking_OLTP.dbo.Transaction_Bancaire
-        WHERE Type_Transaction = 'Virement' AND Montant <= 0
-        """
-        results['montant_type_consistency'] = self.check_accuracy_validation(
-            'Transaction_Bancaire', 'Montant', query, 'Virement transactions must have positive amount', 'High',
-            'Transfer transactions with non-positive amounts indicate data inconsistency'
-        )
-
-        query = """
-        SELECT Transaction_ID, Reference_Transaction
-        FROM CoreBanking_OLTP.dbo.Transaction_Bancaire
-        WHERE Reference_Transaction IS NULL OR Reference_Transaction = ''
-        """
-        results['transaction_sans_reference'] = self.check_accuracy_validation(
-            'Transaction_Bancaire', 'Reference_Transaction', query, 'Each transaction must have a reference', 'Medium',
-            'Transaction is missing a reference number'
-        )
-
-        query = """
-        SELECT t.Transaction_ID, t.Compte_ID
-        FROM CoreBanking_OLTP.dbo.Transaction_Bancaire t
-        JOIN CoreBanking_OLTP.dbo.Compte c ON t.Compte_ID = c.Compte_ID
-        WHERE c.Statut = 'Cloture'
-        """
-        results['transaction_compte_cloture'] = self.check_accuracy_validation(
-            'Transaction_Bancaire', 'Compte_ID', query, 'No transactions allowed on closed accounts', 'High',
-            'Transaction posted on a closed account'
         )
 
         self.enrich_issues_with_dimension_keys()

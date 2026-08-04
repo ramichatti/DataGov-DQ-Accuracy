@@ -1,0 +1,128 @@
+================================================================================
+DAX MEASURES - Data Quality Accuracy Dashboard (CoreBanking_DW)
+Commande  : PowerBI > Modeling > New Measure > Coller une mesure
+================================================================================
+
+=====================  BASE MEASURES  =====================
+
+Total Issues = COUNTROWS(Fact_Accuracy)
+
+Active Issues = CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 0)
+
+Resolved Issues = CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 1)
+
+Resolution Rate = DIVIDE([Resolved Issues], [Total Issues], 0)
+
+Active High = CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 0, Fact_Accuracy[Severity] = "High")
+
+Active Medium = CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 0, Fact_Accuracy[Severity] = "Medium")
+
+Active Low = CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 0, Fact_Accuracy[Severity] = "Low")
+
+=====================  ACCURACY SCORE  =====================
+-- Utilisation : n'importe quel visuel avec ou sans filtre Table_Name
+-- Le score interroge dynamiquement les tables de dimensions
+-- pour obtenir le total d'enregistrements par domaine
+
+Total Records = 
+    SUMX(
+        VALUES(Fact_Accuracy[Table_Name]),
+        SWITCH(Fact_Accuracy[Table_Name],
+            "Client", COUNTROWS(Dim_Client),
+            "Compte", COUNTROWS(Dim_Compte),
+            "Transaction_Bancaire", COUNTROWS(Dim_Transaction),
+            "Credit", COUNTROWS(Dim_Credit)
+        )
+    )
+
+Accuracy Score = 
+    VAR ActiveCount = [Active Issues]
+    VAR TotalRec = [Total Records]
+    RETURN DIVIDE(TotalRec - ActiveCount, TotalRec, 0) * 100
+
+Accuracy Score Label = FORMAT([Accuracy Score], "0.0") & "%"
+
+Accuracy Score Color = 
+    SWITCH(TRUE(),
+        [Accuracy Score] >= 98, "Green",
+        [Accuracy Score] >= 90, "Orange",
+        "Red"
+    )
+
+Resolution Rate Label = FORMAT([Resolution Rate] * 100, "0.0") & "%"
+
+=====================  SCORE PAR TABLE (OPTIONNEL)  =====================
+-- Mesures mono-table pour KPIs/cartes specifiques
+
+Client Score = 
+    VAR Total = COUNTROWS(Dim_Client)
+    VAR Active = CALCULATE([Active Issues], Fact_Accuracy[Table_Name] = "Client")
+    RETURN DIVIDE(Total - Active, Total, 0) * 100
+
+Compte Score = 
+    VAR Total = COUNTROWS(Dim_Compte)
+    VAR Active = CALCULATE([Active Issues], Fact_Accuracy[Table_Name] = "Compte")
+    RETURN DIVIDE(Total - Active, Total, 0) * 100
+
+Transaction Score = 
+    VAR Total = COUNTROWS(Dim_Transaction)
+    VAR Active = CALCULATE([Active Issues], Fact_Accuracy[Table_Name] = "Transaction_Bancaire")
+    RETURN DIVIDE(Total - Active, Total, 0) * 100
+
+Credit Score = 
+    VAR Total = COUNTROWS(Dim_Credit)
+    VAR Active = CALCULATE([Active Issues], Fact_Accuracy[Table_Name] = "Credit")
+    RETURN DIVIDE(Total - Active, Total, 0) * 100
+
+=====================  ISSUES PER DOMAIN  =====================
+
+Issues by Domain = 
+    ADDCOLUMNS(
+        VALUES(Fact_Accuracy[Table_Name]),
+        "Active", CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 0),
+        "High", CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 0, Fact_Accuracy[Severity] = "High"),
+        "Resolved", CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 1),
+        "Score",
+            VAR TotalRec = 
+                SWITCH(Fact_Accuracy[Table_Name],
+                    "Client", COUNTROWS(Dim_Client),
+                    "Compte", COUNTROWS(Dim_Compte),
+                    "Transaction_Bancaire", COUNTROWS(Dim_Transaction),
+                    "Credit", COUNTROWS(Dim_Credit)
+                )
+            VAR Active = CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 0)
+            RETURN DIVIDE(TotalRec - Active, TotalRec, 0) * 100
+    )
+
+Issues by Severity = 
+    ADDCOLUMNS(
+        VALUES(Fact_Accuracy[Severity]),
+        "Count", CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 0)
+    )
+
+=====================  DETAILS PAR DOMAINE  =====================
+
+Client Issues Detail = 
+    ADDCOLUMNS(
+        CALCULATETABLE(VALUES(Fact_Accuracy[Column_Name]), Fact_Accuracy[Table_Name] = "Client"),
+        "Issues", CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 0),
+        "High", CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 0, Fact_Accuracy[Severity] = "High")
+    )
+
+Compte Issues Detail = 
+    ADDCOLUMNS(
+        CALCULATETABLE(VALUES(Fact_Accuracy[Column_Name]), Fact_Accuracy[Table_Name] = "Compte"),
+        "Issues", CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 0)
+    )
+
+Transaction Issues Detail = 
+    ADDCOLUMNS(
+        CALCULATETABLE(VALUES(Fact_Accuracy[Column_Name]), Fact_Accuracy[Table_Name] = "Transaction_Bancaire"),
+        "Issues", CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 0)
+    )
+
+Credit Issues Detail = 
+    ADDCOLUMNS(
+        CALCULATETABLE(VALUES(Fact_Accuracy[Column_Name]), Fact_Accuracy[Table_Name] = "Credit"),
+        "Issues", CALCULATE(COUNTROWS(Fact_Accuracy), Fact_Accuracy[Solved] = 0)
+    )

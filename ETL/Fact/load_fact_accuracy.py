@@ -56,60 +56,123 @@ def check_issue_still_exists(oltp_conn: OLTPConnection, table_name: str, column_
             return True
         
         current_str = str(current_value)
+        va_lower = valeur_attendue.lower()
         
-        # CIN validation: "8 digits (Tunisian format)"
-        if '8 digit' in valeur_attendue.lower():
+        # CIN validation: only for column_name == 'CIN'
+        if column_name == 'CIN' and '8 digit' in va_lower:
             return not (len(current_str) == 8 and current_str.isdigit())
         
         # Telephone validation: "+216 or 00216 followed by 8 digits"
-        if '+216' in valeur_attendue or '00216' in valeur_attendue:
+        if column_name == 'Telephone' and ('+216' in valeur_attendue or '00216' in valeur_attendue):
             cleaned = current_str.replace('+', '').replace(' ', '').replace('-', '')
             is_valid = cleaned.startswith('216') and len(cleaned) == 11
             return not is_valid
         
         # Email validation: "Valid email format"
-        if 'email' in valeur_attendue.lower() and '@' in valeur_attendue:
+        if column_name == 'Email' and 'email' in va_lower and '@' in valeur_attendue:
             import re
             is_valid = bool(re.match(r'[^@]+@[^@]+\.[^@]+', current_str))
             return not is_valid
         
-        # Date validation: "Between X and Y" or "Between Y and Z"
-        if 'between' in valeur_attendue.lower() and 'and' in valeur_attendue.lower():
+        # Business logic: re-check the original condition
+        # "Closed accounts should have zero balance" -> Compte.Statut, check Statut AND Solde
+        if 'should' in va_lower or 'must' in va_lower:
+            if table_name == 'Compte' and column_name == 'Statut' and 'zero' in va_lower:
+                row_query = f"SELECT Statut, Solde FROM CoreBanking_OLTP.dbo.Compte WHERE Compte_ID = {ligne_id}"
+                row_results = oltp_conn.execute_query(row_query)
+                if row_results:
+                    still_bad = row_results[0][0] == 'Cloture' and (row_results[0][1] or 0) != 0
+                    return still_bad
+            # Company-type clients must be 18+ -> Client.Date_Naissance
+            if table_name == 'Client' and column_name == 'Date_Naissance' and '18' in va_lower:
+                row_query = f"SELECT Date_Naissance, Type_Client_ID FROM CoreBanking_OLTP.dbo.Client WHERE Client_ID = {ligne_id}"
+                row_results = oltp_conn.execute_query(row_query)
+                if row_results and row_results[0][0]:
+                    from datetime import date
+                    age = date.today().year - row_results[0][0].year
+                    still_bad = age < 18
+                    return still_bad
+                return True
+            # Virement transactions must have positive amount
+            if table_name == 'Transaction_Bancaire' and column_name == 'Montant' and 'positive' in va_lower:
+                return float(current_value) <= 0
+            # Monthly payment should be at least 10 -> Credit.Montant
+            if table_name == 'Credit' and column_name == 'Montant' and 'monthly' in va_lower:
+                row_query = f"SELECT Montant, Duree_Mois FROM CoreBanking_OLTP.dbo.Credit WHERE Credit_ID = {ligne_id}"
+                row_results = oltp_conn.execute_query(row_query)
+                if row_results and row_results[0][1]:
+                    return (row_results[0][0] or 0) / row_results[0][1] < 10
+            return True
+        
+        # Range validation: "Between X and Y" (dates or numbers)
+        if 'between' in va_lower and 'and' in va_lower:
+            import re
+            from datetime import datetime, date
+            
+            # Try date first: check if current value looks like a date
+            date_val = None
             try:
-                from datetime import datetime
-                date_val = datetime.strptime(current_str[:10], '%Y-%m-%d') if len(current_str) >= 10 else None
-                if date_val:
-                    import re
-                    parts = re.findall(r"[\d-]+", valeur_attendue)
-                    min_date = datetime.strptime(parts[0], '%Y-%m-%d') if len(parts) > 0 else None
-                    max_date = datetime.strptime(parts[1], '%Y-%m-%d') if len(parts) > 1 else None
-                    if min_date and max_date:
-                        return not (min_date <= date_val <= max_date)
+                date_val = datetime.strptime(current_str[:10], '%Y-%m-%d')
             except:
                 pass
+            
+            if date_val:
+                # Parse min/max dates from valeur_attendue
+                date_parts = re.findall(r'\d{4}-\d{2}-\d{2}', valeur_attendue)
+                if len(date_parts) >= 2:
+                    min_date = datetime.strptime(date_parts[0], '%Y-%m-%d')
+                    max_date = datetime.strptime(date_parts[1], '%Y-%m-%d')
+                    return not (min_date <= date_val <= max_date)
+                elif len(date_parts) == 1:
+                    # Only min date found (e.g. "Between 1900-01-01 and 18 years ago")
+                    min_date = datetime.strptime(date_parts[0], '%Y-%m-%d')
+                    # Check if value is reasonable (not before min, not future, person >= 18)
+                    if '18' in va_lower and ('year' in va_lower or 'age' in va_lower):
+                        today = datetime.combine(date.today(), datetime.min.time())
+                        min_age_date = datetime(today.year - 18, today.month, today.day)
+                        return not (min_date <= date_val <= min_age_date)
+                    elif 'current date' in va_lower or 'today' in va_lower:
+                        today = datetime.combine(date.today(), datetime.min.time())
+                        return not (min_date <= date_val <= today)
+                    return True
+            
+            # Numeric range: extract numbers with B/M suffixes
+            import math
+            nums = re.findall(r"[\d.]+", valeur_attendue)
+            if len(nums) >= 2:
+                # Find actual positions in original string to detect suffixes
+                min_str = nums[0]
+                max_str = nums[1]
+                
+                min_idx = valeur_attendue.find(min_str)
+                max_idx = valeur_attendue.find(max_str, min_idx + len(min_str))
+                
+                min_val = float(min_str)
+                max_val = float(max_str)
+                
+                # Check for negative sign before min
+                if min_idx > 0 and valeur_attendue[min_idx-1] == '-':
+                    min_val = -min_val
+                
+                # Check for B/M suffix after min
+                after_min = valeur_attendue[min_idx + len(min_str):min_idx + len(min_str) + 1]
+                if after_min == 'B':
+                    min_val *= 1000000000
+                elif after_min == 'M':
+                    min_val *= 1000000
+                
+                # Check for B/M suffix after max
+                after_max = valeur_attendue[max_idx + len(max_str):max_idx + len(max_str) + 1]
+                if after_max == 'B':
+                    max_val *= 1000000000
+                elif after_max == 'M':
+                    max_val *= 1000000
+                
+                curr_val = float(current_value)
+                return not (min_val <= curr_val <= max_val)
             return True
         
-        # Range validation for numbers: "Between X and Y"
-        if 'between' in valeur_attendue.lower() and 'and' in valeur_attendue.lower():
-            try:
-                import re
-                nums = re.findall(r"[\d.]+", valeur_attendue)
-                if len(nums) >= 2:
-                    min_val = float(nums[0])
-                    max_val = float(nums[1])
-                    curr_val = float(current_value)
-                    return not (min_val <= curr_val <= max_val)
-            except:
-                pass
-            return True
-        
-        # Business logic: "Closed accounts should have zero balance" etc.
-        # For these, we re-check the original condition by querying the row
-        if 'should' in valeur_attendue.lower() or 'must' in valeur_attendue.lower():
-            return True
-        
-        # Default: if row exists, check if value is still null (for null checks)
-        # or assume issue persists
+        # Default: assume issue persists
         return True
         
     except Exception as e:
@@ -204,52 +267,71 @@ def load_fact_accuracy(dwh_conn: DWHConnection, oltp_conn: OLTPConnection, issue
         logger.warning("No quality issues to load")
         return result
     
+    # Load existing unsolved issues keyed by (Table_Name, Column_Name, Ligne_Id, Error_Message)
+    # On duplicate: update Date_Detection; keep Solved/date_de_resolution unchanged (resolution only)
+    existing_query = """
+    SELECT Accuracy_Key, Table_Name, Column_Name, Ligne_Id, Error_Message
+    FROM CoreBanking_DW.dbo.Fact_Accuracy WHERE Solved = 0
+    """
+    existing_map = {}
+    try:
+        cursor = dwh_conn.connection.cursor()
+        cursor.execute(existing_query)
+        for row in cursor.fetchall():
+            existing_map[(str(row[1]), str(row[2]), int(row[3]), str(row[4] or ''))] = int(row[0])
+        cursor.close()
+    except Exception:
+        existing_map = {}
+    
+    rows_inserted = 0
+    rows_updated = 0
+    seen_in_batch = set()
+    
     insert_query = """
     INSERT INTO CoreBanking_DW.dbo.Fact_Accuracy 
     (Date_Key, Client_Key, Agence_Key, Compte_Key, Transaction_Key, Credit_Key,
      Ligne_Id, Table_Name, Column_Name, Valeur_Erreur, Valeur_Attendue,
      Error_Message, Severity, Date_Detection, Solved, date_de_resolution)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE(), 0, NULL)
     """
     
-    rows_inserted = 0
+    update_query = """
+    UPDATE CoreBanking_DW.dbo.Fact_Accuracy
+    SET Date_Detection = GETDATE()
+    WHERE Accuracy_Key = ?
+    """
+    
     try:
         cursor = dwh_conn.connection.cursor()
         
         for issue in issues:
-            # Set dimension keys based on table name and enriched data
-            # All issues should have client_key and agence_key from enrichment
-            # Compte issues should have compte_key
-            # Transaction_Bancaire issues should have transaction_key
-            # Credit issues should have credit_key
-            
-            compte_key_to_use = issue.compte_key if issue.table_name in ['Compte', 'Transaction_Bancaire'] else None
-            transaction_key_to_use = issue.transaction_key if issue.table_name == 'Transaction_Bancaire' else None
-            credit_key_to_use = issue.credit_key if issue.table_name == 'Credit' else None
-            
-            cursor.execute(insert_query, (
-                issue.date_key,
-                issue.client_key,
-                issue.agence_key,
-                compte_key_to_use,
-                transaction_key_to_use,
-                credit_key_to_use,
-                issue.ligne_id,
-                issue.table_name,
-                issue.column_name,
-                issue.valeur_erreur,
-                issue.valeur_attendue,
-                issue.error_message,
-                issue.severity,
-                issue.solved,
-                issue.date_de_resolution
-            ))
-            rows_inserted += 1
+            key = (issue.table_name, issue.column_name, issue.ligne_id, issue.error_message)
+            if key in existing_map:
+                cursor.execute(update_query, (existing_map[key],))
+                rows_updated += 1
+            elif key not in seen_in_batch:
+                seen_in_batch.add(key)
+                compte_key_to_use = issue.compte_key if issue.table_name in ['Compte', 'Transaction_Bancaire'] else None
+                transaction_key_to_use = issue.transaction_key if issue.table_name == 'Transaction_Bancaire' else None
+                credit_key_to_use = issue.credit_key if issue.table_name == 'Credit' else None
+                cursor.execute(insert_query, (
+                    issue.date_key, issue.client_key, issue.agence_key,
+                    compte_key_to_use, transaction_key_to_use, credit_key_to_use,
+                    issue.ligne_id, issue.table_name, issue.column_name,
+                    issue.valeur_erreur, issue.valeur_attendue,
+                    issue.error_message, issue.severity
+                ))
+                rows_inserted += 1
         
         dwh_conn.connection.commit()
         cursor.close()
         
-        logger.info(f"Loaded {rows_inserted} quality issues into Fact_Accuracy")
+        if rows_updated > 0:
+            logger.info(f"Updated Date_Detection for {rows_updated} existing issues")
+        if rows_inserted > 0:
+            logger.info(f"Loaded {rows_inserted} new quality issues into Fact_Accuracy")
+        else:
+            logger.info("No new quality issues to insert (all already tracked)")
         result['inserted'] = rows_inserted
         return result
         
@@ -330,14 +412,12 @@ def run_fact_accuracy_etl(config: dict) -> dict:
         
         result['total_issues'] = len(all_issues)
         
-        # Load issues into Fact_Accuracy
+        # Load issues into Fact_Accuracy (always call to resolve old issues too)
         if all_issues:
             logger.info(f"Loading {len(all_issues)} quality issues into Fact_Accuracy...")
-            load_results = load_fact_accuracy(dwh_conn, oltp_conn, all_issues)
-            result['loaded'] = load_results['inserted']
-            result['resolved'] = load_results['resolved']
-        else:
-            logger.info("No quality issues detected")
+        load_results = load_fact_accuracy(dwh_conn, oltp_conn, all_issues)
+        result['loaded'] = load_results['inserted']
+        result['resolved'] = load_results['resolved']
         
         result['status'] = 'success'
         logger.info("Fact_Accuracy ETL process completed successfully")

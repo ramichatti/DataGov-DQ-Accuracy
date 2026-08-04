@@ -44,6 +44,8 @@ class BaseQualityEngine:
         self.oltp_conn = oltp_conn
         self.dwh_conn = dwh_conn
         self.issues: List[QualityIssue] = []
+        self._default_client_key = self._get_default_client_key()
+        self._default_agence_key = self._get_default_agence_key()
     
     def get_date_key(self, date_value) -> int:
         """Convert date to Date_ID format (YYYYMMDD)"""
@@ -69,6 +71,26 @@ class BaseQualityEngine:
                 return 20200101
         return 20200101
     
+    def _get_default_client_key(self) -> int:
+        try:
+            query = "SELECT MIN(Client_Key) FROM CoreBanking_DW.dbo.Dim_Client"
+            results = self.dwh_conn.execute_query(query)
+            if results and results[0][0]:
+                return results[0][0]
+        except:
+            pass
+        return 1
+
+    def _get_default_agence_key(self) -> int:
+        try:
+            query = "SELECT MIN(Agence_Key) FROM CoreBanking_DW.dbo.Dim_Agence"
+            results = self.dwh_conn.execute_query(query)
+            if results and results[0][0]:
+                return results[0][0]
+        except:
+            pass
+        return 1
+
     def get_client_key_by_id(self, client_id: int) -> int:
         """Get Client_Key from DW by Client_ID_Source"""
         try:
@@ -78,7 +100,7 @@ class BaseQualityEngine:
                 return results[0][0]
         except Exception as e:
             logger.warning(f"Could not find client key for ID {client_id}: {e}")
-        return 1  # Default/unknown client
+        return self._default_client_key
 
     def get_client_key_by_cin(self, cin: str) -> int:
         """Get Client_Key from DW by CIN"""
@@ -89,7 +111,7 @@ class BaseQualityEngine:
                 return results[0][0]
         except Exception as e:
             logger.warning(f"Could not find client key for CIN {cin}: {e}")
-        return 1  # Default/unknown client
+        return self._default_client_key
     
     def get_agence_key_by_code(self, code_agence: str) -> int:
         """Get Agence_Key from DW by Code_Agence"""
@@ -100,7 +122,7 @@ class BaseQualityEngine:
                 return results[0][0]
         except Exception as e:
             logger.warning(f"Could not find agence key for code {code_agence}: {e}")
-        return 1  # Default/unknown agence
+        return self._default_agence_key
     
     def get_compte_key_by_id(self, compte_id: int) -> int:
         """Get Compte_Key from DW by Compte_ID_Source"""
@@ -181,8 +203,8 @@ class BaseQualityEngine:
                     error_message=f"NULL value found in {column_name}",
                     severity=severity,
                     date_key=self.get_date_key(None),
-                    client_key=1,
-                    agence_key=1
+                    client_key=self._default_client_key,
+                    agence_key=self._default_agence_key
                 )
                 self.add_issue(issue)
                 issues_found += 1
@@ -218,8 +240,8 @@ class BaseQualityEngine:
                     error_message=f"Invalid format in {column_name}",
                     severity=severity,
                     date_key=self.get_date_key(None),
-                    client_key=1,
-                    agence_key=1
+                    client_key=self._default_client_key,
+                    agence_key=self._default_agence_key
                 )
                 self.add_issue(issue)
                 issues_found += 1
@@ -255,8 +277,8 @@ class BaseQualityEngine:
                     error_message=f"Value out of range in {column_name}",
                     severity=severity,
                     date_key=self.get_date_key(None),
-                    client_key=1,
-                    agence_key=1
+                    client_key=self._default_client_key,
+                    agence_key=self._default_agence_key
                 )
                 self.add_issue(issue)
                 issues_found += 1
@@ -291,8 +313,8 @@ class BaseQualityEngine:
                     error_message=f"Orphaned record in {column_name}",
                     severity=severity,
                     date_key=self.get_date_key(None),
-                    client_key=1,
-                    agence_key=1
+                    client_key=self._default_client_key,
+                    agence_key=self._default_agence_key
                 )
                 self.add_issue(issue)
                 issues_found += 1
@@ -328,8 +350,8 @@ class BaseQualityEngine:
                     error_message=f"Inaccurate value in {column_name}: {description}",
                     severity=severity,
                     date_key=self.get_date_key(None),
-                    client_key=1,
-                    agence_key=1
+                    client_key=self._default_client_key,
+                    agence_key=self._default_agence_key
                 )
                 self.add_issue(issue)
                 issues_found += 1

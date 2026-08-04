@@ -20,12 +20,8 @@ class CreditQualityEngine(BaseQualityEngine):
 
         results = {
             'montant_extreme_values': 0,
-            'montant_decimal_precision': 0,
             'taux_interet_range_accuracy': 0,
             'date_debut_reasonable': 0,
-            'montant_duree_consistency': 0,
-            'credit_sans_client': 0,
-            'duree_anormale': 0,
             'total_issues': 0
         }
 
@@ -38,17 +34,6 @@ class CreditQualityEngine(BaseQualityEngine):
         results['montant_extreme_values'] = self.check_accuracy_validation(
             'Credit', 'Montant', query, 'Between 100 and 10M', 'High',
             'Credit amount has extreme values that may indicate data entry errors'
-        )
-
-        query = """
-        SELECT Credit_ID, Montant
-        FROM CoreBanking_OLTP.dbo.Credit
-        WHERE Montant IS NOT NULL
-        AND Montant <> ROUND(Montant, 3)
-        """
-        results['montant_decimal_precision'] = self.check_accuracy_validation(
-            'Credit', 'Montant', query, 'Maximum 3 decimal places', 'Medium',
-            'Credit amount should not exceed 3 decimal places for currency accuracy'
         )
 
         query = """
@@ -71,38 +56,6 @@ class CreditQualityEngine(BaseQualityEngine):
         results['date_debut_reasonable'] = self.check_accuracy_validation(
             'Credit', 'Date_Debut', query, 'Between 2000-01-01 and current date', 'High',
             'Credit start date must be reasonable (not in future, not before year 2000)'
-        )
-
-        query = """
-        SELECT Credit_ID, Montant, Duree_Mois
-        FROM CoreBanking_OLTP.dbo.Credit
-        WHERE Montant IS NOT NULL AND Duree_Mois IS NOT NULL
-        AND (Montant / Duree_Mois) < 10
-        """
-        results['montant_duree_consistency'] = self.check_accuracy_validation(
-            'Credit', 'Montant', query, 'Monthly payment should be at least 10', 'High',
-            'Credit amount and duration combination results in unrealistic monthly payment'
-        )
-
-        query = """
-        SELECT Credit_ID, Client_ID
-        FROM CoreBanking_OLTP.dbo.Credit
-        WHERE Client_ID IS NULL
-        """
-        results['credit_sans_client'] = self.check_accuracy_validation(
-            'Credit', 'Client_ID', query, 'Each credit must have an assigned client', 'High',
-            'Credit has no associated client'
-        )
-
-        query = """
-        SELECT Credit_ID, Duree_Mois
-        FROM CoreBanking_OLTP.dbo.Credit
-        WHERE Duree_Mois IS NOT NULL
-        AND (Duree_Mois > 360 OR Duree_Mois < 1)
-        """
-        results['duree_anormale'] = self.check_accuracy_validation(
-            'Credit', 'Duree_Mois', query, 'Duration must be between 1 and 360 months (30 years)', 'High',
-            'Credit duration is outside realistic range'
         )
 
         self.enrich_issues_with_dimension_keys()
